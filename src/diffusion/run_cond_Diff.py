@@ -1,0 +1,878 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+基于AlphaFold3的蛋白质-核酸复合物结构预测扩散模型
+读取embed_af3.py生成的结构嵌入，使用AlphaFold3进行推理
+"""
+
+import argparse
+import datetime
+import functools
+import json
+import os
+import pathlib
+import pickle
+import shutil
+import sys
+import time
+import traceback
+from typing import Dict, List, Optional, Sequence, Tuple, Union
+import csv
+import dataclasses
+
+import numpy as np
+import jax
+import jax.numpy as jnp
+import haiku as hk
+from Bio.PDB import PDBParser
+
+# Add src directory to path
+script_dir = pathlib.Path(__file__).resolve().parent
+src_dir = script_dir.parent.parent
+sys.path.insert(0, str(src_dir))
+
+# Import AlphaFold3 related modules
+from alphafold3.common import folding_input
+# from alphafold3.common import residue_constants
+from alphafold3.constants import chemical_components
+from alphafold3.data import featurisation
+from alphafold3.model import model
+from alphafold3.model import params as af3_params
+from alphafold3.model.components import utils as af3_utils
+from alphafold3.model import post_processing
+from alphafold3.model import features as af3_features
+
+# Import embedding module
+from embeddings.embed_cond import Embedder, parse_pdb_atoms
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class ResultsForSeed:
+    """Stores the inference results (diffusion samples) for a single seed.
+
+    Attributes:
+      seed: The seed used to generate the samples.
+      inference_results: The inference results, one per sample.
+      embeddings: The final trunk single and pair embeddings, if requested.
+      name: The name of the job, analogous to fold_input.sanitised_name().
+    """
+
+    seed: int
+    inference_results: Sequence[model.InferenceResult]
+    embeddings: Optional[Dict[str, np.ndarray]] = None
+    name: str = "unnamed_job"
+
+
+class ModelRunner:
+    """
+    SiteAF3 model runner
+    Used to run structure prediction
+    """
+    def __init__(
+        self,
+        config: model.Model.Config,
+        device: jax.Device,
+        model_dir: pathlib.Path,
+        verbose: bool = False,
+        use_precomputed_embed: bool = False,
+        use_pocket_diffusion: bool = False,
+    ):
+        """
+        Initialize ModelRunner
+        
+        Args:
+            config: Model configuration
+            device: JAX device
+            model_dir: Model parameter directory
+            verbose: Whether to output detailed information
+            use_precomputed_embed: Whether to use Cond_Model to directly load precomputed embeddings
+            use_pocket_diffusion: Whether to use Cond_Model's pocket diffusion logic
+        """
+        self._model_config = config
+        self._device = device
+        self._model_dir = model_dir
+        self.verbose = verbose
+        self.use_precomputed_embed = use_precomputed_embed
+        self.use_pocket_diffusion = use_pocket_diffusion
+
+        # Dynamically add the flag to the config if pocket diffusion is used
+        if self.use_pocket_diffusion:
+            self._model_config.use_pocket_diffusion_logic = True
+        else:
+            # Ensure the flag is not there or False if not using pocket diffusion
+            if hasattr(self._model_config, 'use_pocket_diffusion_logic'):
+                self._model_config.use_pocket_diffusion_logic = False
+        
+        if self.verbose:
+            print(f"Initialize model, parameter directory: {model_dir}")
+            if self.use_precomputed_embed:
+                print("Use Cond_Model, directly use precomputed embeddings (standard Cond_Model behavior)")
+            if self.use_pocket_diffusion:
+                print("Use Cond_Model's pocket diffusion logic (fix protein, update RNA)")
+    
+    @functools.cached_property
+    def model_params(self) -> hk.Params:
+        """Load model parameters"""
+        if self.verbose:
+            print("Load model parameters...")
+        return af3_params.get_model_haiku_params(model_dir=self._model_dir)
+    
+    @functools.cached_property
+    def _model(self):
+        """Create model function"""
+        def forward_fn(batch):
+            with af3_utils.bfloat16_context():
+                # If pocket diffusion is on, Cond_Model is used. 
+                # Cond_Model's __call__ will check config.use_pocket_diffusion_logic.
+                # If only direct_embed is on, Cond_Model is also used, and its __call__ handles it.
+                if self.use_pocket_diffusion or self.use_precomputed_embed:
+                    # Pass the (potentially modified) config to Cond_Model
+                    af3_model = model.Cond_Model(self._model_config)
+                else:
+                    af3_model = model.Model(self._model_config)
+                return af3_model(batch)
+                
+        return hk.transform(forward_fn)
+    
+    def run_inference(self, features_batch, rng_seed=1357066236):
+        """
+        Run model inference
+        
+        Args:
+            features_batch: Feature batch
+            rng_seed: Random seed
+            
+        Returns:
+            Inference result
+        """
+        if self.verbose:
+            print(f"Run inference on device {self._device}...")
+            
+        # Create random key
+        key = jax.random.PRNGKey(rng_seed)
+        
+        # Ensure features are correctly processed and placed on the device
+        processed_features_batch = jax.device_put(
+            jax.tree_util.tree_map(
+                jax.numpy.asarray, af3_utils.remove_invalidly_typed_feats(features_batch)
+            ),
+            self._device
+        )
+
+        result_dict = jax.jit(self._model.apply, device=self._device)(
+            self.model_params, key, processed_features_batch
+        )
+
+        # Convert JAX arrays to NumPy arrays, which is important for subsequent structure processing
+        result_numpy = jax.tree_util.tree_map(np.asarray, result_dict)
+        result_numpy = jax.tree_util.tree_map(
+            lambda x: x.astype(np.float32) if hasattr(x, 'dtype') and x.dtype == jnp.bfloat16 else x,
+            result_numpy
+        )
+        result = dict(result_numpy)
+        identifier = self.model_params['__meta__']['__identifier__'].tobytes()
+        result['__identifier__'] = identifier
+        
+        return result
+
+    def extract_inference_results_and_maybe_embeddings(
+        self,
+        features_batch: af3_features.BatchDict, 
+        result: model.ModelResult,
+        target_name: str
+    ) -> tuple[list[model.InferenceResult], dict[str, np.ndarray] | None]:
+        """Extract inference results and embeddings from model output (if set)"""
+        inference_results = list(
+            model.Model.get_inference_result(
+                batch=features_batch, result=result, target_name=target_name
+            )
+        )
+        
+        # We need to truncate embeddings based on token number
+        # The length of token_chain_ids can be used as num_tokens
+        num_tokens = 0
+        if inference_results and 'token_chain_ids' in inference_results[0].metadata:
+            num_tokens = len(inference_results[0].metadata['token_chain_ids'])
+        else:
+            # Get num_res from features_batch as a fallback
+            # This depends on whether features_batch has 'num_res' and its meaning is consistent with num_tokens
+            if 'num_res' in features_batch:
+                num_tokens = features_batch['num_res'] # This is a NumPy array, need .item()
+                if isinstance(num_tokens, np.ndarray):
+                    num_tokens = num_tokens.item()
+            elif self.verbose:
+                print("Warning: Unable to determine num_tokens for embedding extraction.")
+
+        embeddings = {}
+        if num_tokens > 0:
+            if 'single_embeddings' in result:
+                embeddings['single_embeddings'] = result['single_embeddings'][:num_tokens]
+            if 'pair_embeddings' in result:
+                embeddings['pair_embeddings'] = result['pair_embeddings'][
+                    :num_tokens, :num_tokens
+                ]
+        
+        return inference_results, embeddings if embeddings else None
+
+
+def load_embedding_file(embedding_path: str, verbose: bool = False) -> Dict:
+    """
+    Load embedding file
+    
+    Args:
+        embedding_path: Embedding file path
+        verbose: Whether to output detailed information
+        
+    Returns:
+        Embedding data dictionary
+    """
+    if verbose:
+        print(f"Load embedding file: {embedding_path}")
+        
+    if not os.path.exists(embedding_path):
+        raise FileNotFoundError(f"Embedding file not found: {embedding_path}")
+    
+    try:
+        with open(embedding_path, 'rb') as f:
+            embedding_data = pickle.load(f)
+        
+        if verbose:
+            print("Embedding file loaded successfully")
+            print(f"Contains keys: {list(embedding_data.keys())}")
+            
+        return embedding_data
+    except Exception as e:
+        raise RuntimeError(f"Error loading embedding file: {e}")
+
+
+def create_fold_input_from_embedding(embedding_data: Dict, verbose: bool = False) -> folding_input.Input:
+    """
+    Create folding_input object from embedding data
+    
+    Args:
+        embedding_data: Loaded embedding data
+        verbose: Whether to output detailed information
+        
+    Returns:
+        folding_input.Input object
+    """
+    if verbose:
+        print("Create folding_input object from embedding data...")
+        
+    # Get sequence information
+    seq_info = embedding_data.get('seq_info')
+    if not seq_info:
+        raise ValueError("Embedding data is missing seq_info")
+    
+    name = seq_info.get('name', 'unnamed')
+    chains_info = seq_info.get('chains', [])
+    
+    if not chains_info:
+        raise ValueError("No valid chain information found in sequence information")
+    
+    # Create chain objects
+    chains = []
+    for chain_info in chains_info:
+        chain_id = chain_info.get('chain_id')
+        sequence = chain_info.get('sequence')
+        chain_type = chain_info.get('chain_type')
+        
+        if chain_type == 'protein':
+            chain = folding_input.ProteinChain(
+                id=chain_id,
+                sequence=sequence,
+                ptms=[],
+                paired_msa="", 
+                unpaired_msa="",
+                templates=[]
+            )
+        elif chain_type == 'rna':
+            chain = folding_input.RnaChain(
+                id=chain_id,
+                sequence=sequence,
+                modifications=[],
+                unpaired_msa=""
+            )
+        elif chain_type == 'dna':
+            chain = folding_input.DnaChain(
+                id=chain_id,
+                sequence=sequence,
+                modifications=[]
+            )
+        else:
+            raise ValueError(f"Unknown chain type: {chain_type}")
+        
+        chains.append(chain)
+    
+    fold_input = folding_input.Input(
+        name=name,
+        chains=chains,
+        rng_seeds=[42],
+    )
+    
+    if verbose:
+        print(f"Created folding_input object: name={name}, chain number={len(chains)}")
+        for i, chain in enumerate(chains):
+            chain_type = "Protein" if isinstance(chain, folding_input.ProteinChain) else (
+                "RNA" if isinstance(chain, folding_input.RnaChain) else "DNA"
+            )
+            print(f"Chain {i+1}: ID={chain.id}, type={chain_type}, length={len(chain.sequence)}")
+    
+    return fold_input
+
+
+def _prepare_features_for_inference(embedding_data: Dict, verbose: bool = False) -> Dict:
+    """
+    Prepare features for model inference from embedding data
+
+    Args:
+        embedding_data: Dictionary containing embeddings and sequence information
+        verbose: Whether to output detailed information
+
+    Returns:
+        Prepared features batch dictionary
+    """
+    print("Prepare features for model inference...")
+
+    input_features = embedding_data.get('input_features')
+    if not input_features:
+        fold_input_obj = create_fold_input_from_embedding(embedding_data, verbose=verbose)
+        batches = featurisation.featurise_input(
+            fold_input=fold_input_obj,
+            buckets=None,
+            ccd=chemical_components.cached_ccd(),
+            verbose=verbose,
+            conformer_max_iterations=None
+        )
+        features_batch = batches[0]
+    else:
+        features_batch = input_features
+
+    features_batch = {k: v for k, v in features_batch.items()}
+
+    embeddings_dict = embedding_data.get('embeddings', {})
+    if 'single' in embeddings_dict and 'pair' in embeddings_dict:
+        if verbose:
+            print("Integrate single/pair embeddings into features...")
+        features_batch['single_embedding'] = embeddings_dict['single']
+        features_batch['pair_embedding'] = embeddings_dict['pair']
+    
+    # Ensure structure_atom_coords and atom_mask exist in features_batch for pocket diffusion
+    if 'structure_atom_coords' in embeddings_dict and 'structure_atom_mask' in embeddings_dict:
+        if verbose:
+            print("Integrate structure_atom_coords/mask into features...")
+        features_batch['structure_atom_coords'] = embeddings_dict['structure_atom_coords']
+        features_batch['structure_atom_mask'] = embeddings_dict['structure_atom_mask']
+
+        actual_num_tokens = embeddings_dict['single'].shape[0]
+        receptor_chain_ids = set()
+        
+        # Method 1: Find receptor chains from seq_info
+        if 'seq_info' in embedding_data:
+            for chain in embedding_data['seq_info']['chains']:
+                # Check if there is a receptor mark (this needs to be added during embedding generation)
+                if chain.get('is_receptor', False):
+                    receptor_chain_ids.add(chain['chain_id'])
+        
+        # Method 2: If there is no explicit receptor mark, use heuristic method
+        if not receptor_chain_ids and 'seq_info' in embedding_data:
+            chains = embedding_data['seq_info']['chains']
+            protein_chains = [c for c in chains if c['chain_type'] == 'protein']
+            
+            if len(protein_chains) == 1:
+                # Only one protein chain, assume it is the receptor
+                receptor_chain_ids.add(protein_chains[0]['chain_id'])
+            elif len(protein_chains) > 1:
+                # Multiple protein chains, use the longest as receptor (heuristic)
+                longest_chain = max(protein_chains, key=lambda c: len(c['sequence']))
+                receptor_chain_ids.add(longest_chain['chain_id'])
+                if verbose:
+                    print(f"Multiple protein chains detected, use the longest chain {longest_chain['chain_id']} as receptor")
+        
+        # Method 3: If there is still no receptor chain, revert to original logic (all proteins)
+        if not receptor_chain_ids:
+            if verbose:
+                print("Warning: Unable to determine receptor chain, all protein chains are considered as receptors")
+            for chain in embedding_data['seq_info']['chains']:
+                if chain['chain_type'] == 'protein':
+                    receptor_chain_ids.add(chain['chain_id'])
+        
+        # Generate is_receptor mask: only receptor chain residues are True
+        # Use actual token number instead of calculated value from seq_info
+        is_receptor_list = []
+        current_token_idx = 0
+        
+        for chain in embedding_data['seq_info']['chains']:
+            chain_id = chain['chain_id']
+            chain_type = chain['chain_type']
+            is_receptor_chain = chain_id in receptor_chain_ids
+            
+
+            if chain_type == 'ligand':
+                calculated_chain_length = chain['end_residue_index'] - chain['start_residue_index'] + 1
+                
+                remaining_tokens = actual_num_tokens - current_token_idx
+                if current_token_idx < actual_num_tokens:
+                    current_chain_index = embedding_data['seq_info']['chains'].index(chain)
+                    remaining_chains = embedding_data['seq_info']['chains'][current_chain_index + 1:]
+                    
+                    if not remaining_chains:
+                        # This is the last chain, use all remaining tokens
+                        actual_chain_length = remaining_tokens
+                        if calculated_chain_length != remaining_tokens and verbose:
+                            print(f"Small molecule chain {chain_id}: calculated length ({calculated_chain_length}) != remaining token number ({remaining_tokens}), use remaining token number")
+                    else:
+                        # Not the last chain, use the length calculated from seq_info
+                        actual_chain_length = calculated_chain_length
+                        if verbose:
+                            print(f"Small molecule chain {chain_id}: use calculated chain length {actual_chain_length}")
+                else:
+                    actual_chain_length = 0
+            else:
+                # For protein and nucleic acids, use sequence length
+                actual_chain_length = len(chain['sequence'])
+            
+            # Ensure token number does not exceed actual token number
+            actual_chain_length = min(actual_chain_length, actual_num_tokens - current_token_idx)
+
+            # Only receptor chain residues are marked as True
+            for _ in range(actual_chain_length):
+                if current_token_idx < actual_num_tokens:
+                    is_receptor_list.append(is_receptor_chain and chain_type == 'protein')
+                    current_token_idx += 1
+        
+        # Truncate to actual length
+        while len(is_receptor_list) < actual_num_tokens:
+            is_receptor_list.append(False)
+        is_receptor_list = is_receptor_list[:actual_num_tokens]
+        
+        features_batch['is_receptor'] = np.array(is_receptor_list, dtype=np.bool_)
+        
+        if verbose:
+            fixed_count = np.sum(features_batch['is_receptor'])
+            total_count = len(features_batch['is_receptor'])
+            print(f"Receptor chain IDs: {receptor_chain_ids}")
+            print(f"Fixed residue number: {fixed_count} / {total_count} ({fixed_count/total_count*100:.2f}%)")
+            print(f"Actual token number: {actual_num_tokens}, mask length: {len(features_batch['is_receptor'])}")
+
+    else:
+        # If pocket diffusion needs these but they don't exist, it may need a warning or error
+        if verbose:
+            print("Warning: structure_atom_coords and/or structure_atom_mask not found in embeddings, pocket diffusion may fail.")
+
+    if 'pocket_mask' in embedding_data:
+        features_batch['pocket_mask'] = embedding_data['pocket_mask']
+        if verbose:
+            print("Add pocket mask...")
+            pocket_count = np.sum(embedding_data['pocket_mask'])
+            total_count = len(embedding_data['pocket_mask'])
+            print(f"Number of 1s in pocket mask: {pocket_count} / {total_count} ({pocket_count/total_count*100:.2f}%)")
+    
+    if 'center_pos' in embedding_data:
+        features_batch['center_pos'] = embedding_data['center_pos']
+        if verbose:
+            print(f"Add center position (center_pos): {embedding_data['center_pos']}")
+    elif verbose: # Only print warning if verbose, as Cond_Model will raise error if it's missing and needed
+        print("Warning: 'center_pos' not found in embedding_data, pocket diffusion may fail.")
+
+    return features_batch
+
+
+def _write_outputs_custom(
+    all_results_for_seed: Sequence[ResultsForSeed],
+    output_dir: pathlib.Path,
+    features_batch: af3_features.BatchDict,
+    embedding_data: Dict,
+    verbose: bool = False
+):
+    """
+    Process model outputs and save results, including structure files, confidence, etc.
+    This function is based on write_outputs in run_alphafold.py and old _process_and_save_outputs.
+    """
+    if verbose:
+        print(f"Post-process and save results to: {output_dir}")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    output_terms_path = None
+    try:
+        import alphafold3.cpp
+        output_terms_path = pathlib.Path(alphafold3.cpp.__file__).parent / 'OUTPUT_TERMS_OF_USE.md'
+        if not output_terms_path.exists():
+            if verbose:
+                print(f"警告: 未在预期位置找到 OUTPUT_TERMS_OF_USE.md: {output_terms_path}")
+            output_terms_path = None 
+    except ImportError:
+        if verbose:
+            print("警告: 无法导入 alphafold3.cpp，无法确定 OUTPUT_TERMS_OF_USE.md 的路径")
+        output_terms_path = None
+    
+    output_terms_content = None
+    if output_terms_path and output_terms_path.exists():
+        try:
+            output_terms_content = output_terms_path.read_text()
+        except Exception as e:
+            if verbose:
+                print(f"读取 OUTPUT_TERMS_OF_USE.md 时出错: {e}")
+
+    ranking_scores_data = []
+    max_ranking_score = None
+    best_inference_result_for_ranking = None
+    job_name_for_top_ranked = "model" # 默认值
+
+    for results_for_seed_item in all_results_for_seed:
+        current_seed = results_for_seed_item.seed
+        current_job_name = results_for_seed_item.name
+        if not job_name_for_top_ranked or job_name_for_top_ranked == "model": # Use first valid name
+            job_name_for_top_ranked = current_job_name
+
+        for sample_idx, inference_result_obj in enumerate(results_for_seed_item.inference_results):
+            sample_dir = output_dir / f"seed-{current_seed}_sample-{sample_idx}"
+            os.makedirs(sample_dir, exist_ok=True)
+            if verbose:
+                print(f"Create sample directory: {sample_dir}")
+
+            try:
+                post_processing.write_output(
+                    inference_result=inference_result_obj,
+                    output_dir=str(sample_dir)
+                )
+                if verbose:
+                    print(f"Output for sample {sample_idx} (seed {current_seed}) written to {sample_dir}")
+            except Exception as e:
+                print(f"Error writing output for sample {sample_idx} (seed {current_seed}): {e}")
+                if verbose: print(traceback.format_exc())
+
+            ranking_score = float(inference_result_obj.metadata.get('ranking_score', 0.0))
+            ranking_scores_data.append((f"seed-{current_seed}_sample-{sample_idx}", ranking_score))
+
+            if max_ranking_score is None or ranking_score > max_ranking_score:
+                max_ranking_score = ranking_score
+                best_inference_result_for_ranking = inference_result_obj
+
+        if results_for_seed_item.embeddings:
+            embeddings_dir = output_dir / f"seed-{current_seed}_embeddings"
+            os.makedirs(embeddings_dir, exist_ok=True)
+            try:
+                post_processing.write_embeddings(
+                    embeddings=results_for_seed_item.embeddings,
+                    output_dir=str(embeddings_dir)
+                )
+                if verbose:
+                    print(f"Embeddings saved to: {embeddings_dir}")
+            except Exception as e:
+                print(f"Error saving embeddings: {e}")
+                if verbose: print(traceback.format_exc())
+
+    if best_inference_result_for_ranking is not None:
+        try:
+            post_processing.write_output(
+                inference_result=best_inference_result_for_ranking,
+                output_dir=str(output_dir),
+                terms_of_use=output_terms_content,
+                name=job_name_for_top_ranked
+            )
+            if verbose:
+                print(f"Top ranked model ({job_name_for_top_ranked}) saved to main output directory: {output_dir}")
+        except Exception as e:
+            print(f"Error saving top ranked model: {e}")
+            if verbose: print(traceback.format_exc())
+
+    scores_path = output_dir / "ranking_scores.csv"
+    try:
+        with open(scores_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["model", "ptm_score", "iptm_score", "ranking_score"])
+            
+            for results_for_seed_item in all_results_for_seed:
+                current_seed = results_for_seed_item.seed
+                for sample_idx, inf_res in enumerate(results_for_seed_item.inference_results):
+                    model_name = f"seed-{current_seed}_sample-{sample_idx}"
+                    
+                    ptm_score = inf_res.metadata.get('predicted_tm_score', 0.0)
+                    iptm_score = inf_res.metadata.get('interface_predicted_tm_score', 0.0)
+                    ranking_s = inf_res.metadata.get('ranking_score', 0.0)
+                                           
+                    writer.writerow([model_name, f"{ptm_score:.4f}", f"{iptm_score:.4f}", f"{ranking_s:.4f}"])
+        if verbose:
+            print(f"Saved ranking scores to: {scores_path}")
+    except Exception as e:
+        print(f"Error saving ranking scores: {e}")
+        if verbose: print(traceback.format_exc())
+
+    try:
+        terms_src = src_dir.parent / "alphafold3" / "TERMS_OF_USE.md"
+        if terms_src.exists():
+            shutil.copy(terms_src, output_dir / "TERMS_OF_USE.md")
+            if verbose:
+                print(f"Copied AlphaFold 3 TERMS_OF_USE.md to: {output_dir / 'TERMS_OF_USE.md'}")
+        elif verbose:
+            print(f"Warning: TERMS_OF_USE.md not found at {terms_src}")
+    except Exception as e:
+        print(f"Error copying AlphaFold 3 TERMS_OF_USE.md: {e}")
+        if verbose: print(traceback.format_exc())
+    
+    seq_info = embedding_data['seq_info']
+    name_from_seq = seq_info.get('name', 'model')
+    try:
+        simple_features = {}
+        for k, v in features_batch.items():
+            if k in ['atom_positions', 'all_atom_positions', 'all_atom_mask', 'structure_atom_coords', 
+                       'structure_atom_mask', 'pair_embedding', 'single_embedding', 'target_feat']:
+                continue
+            try:
+                if isinstance(v, np.ndarray):
+                    simple_features[k + "_shape"] = list(v.shape)
+                elif isinstance(v, (int, float, str, bool)):
+                    simple_features[k] = v
+            except: 
+                pass
+        
+        simple_results_info = {}
+        if all_results_for_seed and all_results_for_seed[0].inference_results:
+            first_inf_res = all_results_for_seed[0].inference_results[0]
+            if 'contact_probs' in first_inf_res.numerical_data:
+                cp_shape = first_inf_res.numerical_data['contact_probs'].shape
+                simple_results_info["distogram_contact_probs_shape"] = list(cp_shape)
+            
+            if 'predicted_lddt' in first_inf_res.numerical_data:
+                 plddt_shape = first_inf_res.numerical_data['predicted_lddt'].shape
+                 simple_results_info["predicted_lddt_shape"] = list(plddt_shape)
+            elif first_inf_res.predicted_structure.atom_b_factor is not None:
+                 plddt_shape = first_inf_res.predicted_structure.atom_b_factor.shape
+                 simple_results_info["predicted_structure_b_factors_shape"] = list(plddt_shape)
+            
+            if 'predicted_tm_score' in first_inf_res.metadata:
+                simple_results_info["predicted_tm_score"] = first_inf_res.metadata['predicted_tm_score']
+            if 'interface_predicted_tm_score' in first_inf_res.metadata:
+                simple_results_info["interface_predicted_tm_score"] = first_inf_res.metadata['interface_predicted_tm_score']
+
+        info_json = {
+            "name": name_from_seq,
+            "seq_info": embedding_data.get('seq_info'),
+            "features_info": simple_features,
+            "results_info": simple_results_info,
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        info_json_path = output_dir / f"{name_from_seq}_info.json"
+        with open(info_json_path, 'w') as f:
+            json.dump(info_json, f, indent=2)
+        if verbose:
+            print(f"Saved info to: {info_json_path}")
+    except Exception as e:
+        print(f"Error saving info JSON: {e}")
+        if verbose: print(traceback.format_exc())
+
+
+def predict_structure_from_embedding(
+    embedding_data: Dict,
+    model_runner: ModelRunner,
+    output_dir: pathlib.Path,
+    verbose: bool = False,
+    rng_seed: int = 42
+) -> None:
+    """
+    Predict structure from embedding data
+    
+    Args:
+        embedding_data: Embedding data
+        model_runner: Model runner
+        output_dir: Output directory
+        verbose: Whether to show detailed information
+        rng_seed: Random seed for model inference
+        
+    Returns:
+        None
+    """
+    if verbose:
+        print("Start predicting structure from embedding data...")
+    
+    # 1. Prepare features
+    features_batch_dict = _prepare_features_for_inference(embedding_data, verbose=verbose)
+    
+    # 2. Run inference
+    if verbose:
+        print("Run model inference...")
+    raw_model_result = model_runner.run_inference(features_batch_dict, rng_seed=rng_seed)
+
+    # 3. Extract inference results and embeddings
+    if verbose:
+        print("Extract inference results and embeddings...")
+    
+    seq_info = embedding_data['seq_info']
+    target_name = seq_info.get('name', 'unnamed_target')
+
+    try:
+        inference_results, embeddings = model_runner.extract_inference_results_and_maybe_embeddings(
+            features_batch=features_batch_dict, 
+            result=raw_model_result, 
+            target_name=target_name,
+            rng_seed=rng_seed
+        )
+    except Exception as e:
+        print(f"Error calling extract_inference_results_and_maybe_embeddings: {e}")
+        if verbose:
+            print(traceback.format_exc())
+        raise
+
+    # 4. Prepare ResultsForSeed object
+    # Since we start from a single embedding file, there is only one "seed" (i.e. the fixed rng_seed we use)
+    results_for_this_run = [
+        ResultsForSeed(
+            seed=rng_seed, 
+            inference_results=inference_results, 
+            embeddings=embeddings, 
+            name=target_name
+        )
+    ]
+    
+    # 5. Process and save outputs
+    _write_outputs_custom(
+        all_results_for_seed=results_for_this_run,
+        output_dir=output_dir,
+        features_batch=features_batch_dict,
+        embedding_data=embedding_data,
+        verbose=verbose
+    )
+    
+# def main(args):
+#     """
+#     主函数
+    
+#     Args:
+#         args: 命令行参数
+#     """
+#     # 检查输入文件
+#     if not os.path.exists(args.embedding_file):
+#         raise FileNotFoundError(f"嵌入文件不存在: {args.embedding_file}")
+    
+#     # 创建输出目录
+#     output_dir = pathlib.Path(args.output_dir)
+#     os.makedirs(output_dir, exist_ok=True)
+    
+#     if args.verbose:
+#         print(f"输入嵌入文件: {args.embedding_file}")
+#         print(f"输出目录: {output_dir}")
+#         print(f"模型目录: {args.model_dir}")
+#         if args.use_precomputed_embed:
+#             print("使用Cond_Model模式 - 将直接使用预计算的embeddings (标准Cond_Model)")
+#         if args.use_pocket_diffusion:
+#             print("使用Cond_Model的口袋扩散模式 - 固定蛋白质，更新核酸")
+    
+#     # 设置JAX设备
+#     devices = jax.devices()
+#     device = devices[0]  # 使用第一个可用设备
+    
+#     if args.verbose:
+#         print(f"使用JAX设备: {device}")
+    
+#     # 创建模型配置
+#     model_config = model.Model.Config()
+#     # 如果需要，可以在这里修改模型配置
+    
+#     # 加载模型
+#     model_runner = ModelRunner(
+#         config=model_config,
+#         device=device,
+#         model_dir=pathlib.Path(args.model_dir),
+#         verbose=args.verbose,
+#         use_precomputed_embed=args.use_precomputed_embed,
+#         use_pocket_diffusion=args.use_pocket_diffusion
+#     )
+    
+#     # 加载嵌入文件
+#     embedding_data = load_embedding_file(args.embedding_file, verbose=args.verbose)
+    
+#     # 定义特定的输出子目录
+#     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+#     embedding_name = os.path.basename(args.embedding_file).replace(".pkl", "")
+    
+#     suffix = ""
+#     if args.use_pocket_diffusion:
+#         suffix = "_pocket"
+#     elif args.use_precomputed_embed:
+#         suffix = "_cond"
+    
+#     run_dir = output_dir / f"{embedding_name}{suffix}_{timestamp}"
+    
+#     if args.verbose:
+#         print(f"结果将保存到子目录: {run_dir}")
+    
+#     # 记录开始时间
+#     start_time = time.time()
+    
+#     # 预测结构
+#     # predict_structure_from_embedding 现在不返回任何东西
+#     # Also, no longer need to loop seeds here, as run_SiteAF3.py handles it.
+#     # Assuming main() here is called if run_cond_Diff.py is run standalone.
+#     # For standalone run, it might use a default seed or one from its own args.
+#     # The rng_seed in predict_structure_from_embedding will be used.
+    
+#     # Get the seed from args if running standalone, otherwise it will be passed by run_SiteAF3.py
+#     current_run_seed = args.rng_seed if hasattr(args, 'rng_seed') and args.rng_seed is not None else 1357066236
+
+#     predict_structure_from_embedding(
+#         embedding_data=embedding_data,
+#         model_runner=model_runner,
+#         output_dir=run_dir,
+#         verbose=args.verbose,
+#         rng_seed=current_run_seed
+#     )
+    
+#     # 计算运行时间
+#     elapsed_time = time.time() - start_time
+    
+#     if args.verbose:
+#         print(f"运行完成，用时: {elapsed_time:.2f}秒")
+    
+#     return 0
+
+
+# def parse_args():
+#     """解析命令行参数"""
+#     parser = argparse.ArgumentParser(description="基于AlphaFold3的蛋白质-核酸复合物结构预测")
+    
+#     parser.add_argument(
+#         "--embedding_file",
+#         required=True,
+#         help="嵌入文件路径，由embed_af3.py生成的.pkl文件"
+#     )
+#     parser.add_argument(
+#         "--output_dir",
+#         default="./output",
+#         help="输出目录路径，默认为./output"
+#     )
+#     parser.add_argument(
+#         "--model_dir",
+#         default="/work/hat170/aptamer/alphafold3/weight",
+#         help="AlphaFold3模型参数目录，默认为/work/hat170/aptamer/alphafold3/weight"
+#     )
+#     parser.add_argument(
+#         "--verbose",
+#         action="store_true",
+#         help="显示详细输出"
+#     )
+#     parser.add_argument(
+#         "--use_precomputed_embed",
+#         action="store_true",
+#         help="直接使用预计算的single/pair embeddings"
+#     )
+#     parser.add_argument(
+#         "--use_pocket_diffusion",
+#         action="store_true",
+#         help="(Cond_Model口袋模式) 使用Cond_Model的口袋扩散逻辑 (固定蛋白质，更新核酸)。需要输入中包含structure_atom_coords。"
+#     )
+#     parser.add_argument(
+#         "--rng_seed",
+#         type=int,
+#         default=None, # Default to None, predict_structure_from_embedding will use its own default if not set
+#         help="Random seed for the diffusion model inference. Overrides internal defaults if set."
+#     )
+    
+#     return parser.parse_args()
+
+
+# if __name__ == "__main__":
+#     args = parse_args()
+#     sys.exit(main(args))
