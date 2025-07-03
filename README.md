@@ -19,7 +19,7 @@ SiteAF3 is a universal molecular interaction analysis platform based on AlphaFol
 **Ligand Types:**
 - `protein`: Protein
 - `nucleic`: Nucleic acid (DNA/RNA)
-- `small_molecule`: Small molecule ligand
+- `small_molecule`: Small molecule ligand / ions
 
 ### 📊 Supported Molecule Combinations
 
