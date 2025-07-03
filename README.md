@@ -27,9 +27,7 @@ SiteAF3 is a universal molecular interaction analysis platform based on AlphaFol
 |---------------|----------------|-----------------------------------------------|
 | protein       | nucleic        | Protein-RNA/DNA complex                       |
 | protein       | small_molecule | Protein-drug complex                          |
-| protein       | protein        | Protein-protein interaction                   |
-| nucleic       | protein        | RNA/DNA-protein complex                       |
-| nucleic       | nucleic        | Nucleic acid-nucleic acid interaction         |
+| protein       | protein        | Protein-peptide interaction                   |
 | nucleic       | small_molecule | Nucleic acid-small molecule (not tested)      |
 
 ### 🔧 Main Tools
