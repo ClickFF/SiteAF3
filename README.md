@@ -120,7 +120,7 @@ The program automatically detects chain types based on:
 1. **Atom check**: Search for characteristic atoms (CA atoms→protein, P atoms→nucleic acid)
 2. **Residue ratio**: Count ratio of standard amino acids and nucleic acid residues
 3. **Small molecule identification**: Exclude water molecules and ions, identify ligand molecules
-4. **Atom count**: Small molecules typically have 3-200 heavy atoms
+4. **Atom count**: Small molecules typically have 1-200 heavy atoms
 5. **Element composition**: Molecules containing non-standard elements
 
 ### Representative Atom Selection
