@@ -202,7 +202,7 @@ If you use SiteAF3 in your research, please cite:
   title={SiteAF3: Universal Molecular Interaction Analysis Platform},
   author={Haocheng Tang},
   year={2025},
-  url={https://github.com/your-repo/SiteAF3}
+  url={https://github.com/HaCTang/SiteAF3}
 }
 ```
 
