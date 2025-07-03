@@ -94,7 +94,7 @@ python run_SiteAF3.py \
 ### SiteAF3 Main Program Configuration
 
 In the JSON configuration file for `run_SiteAF3.py`,
-See more JSON cases in test_input folder.
+See more JSON cases in `test_input` folder.
 
 ```json
 {
