@@ -1,0 +1,27 @@
+{
+    "name": "SiteAF3_1ia1_cplx",
+    "modelSeeds": [42],
+    "receptor": [
+        {
+            "rec_struct_path": "/work/hat170/aptamer/SiteAF3/test_input/1ia1/1ia1.pdb",
+            "fixed_chain_id": ["A"],
+            "hotspot_path": "/work/hat170/aptamer/SiteAF3/test_input/1ia1/1ia1_hotspot.pdb",
+            "pocket_path": "/work/hat170/aptamer/SiteAF3/test_input/1ia1/1ia1_pocket.pdb"
+        }
+    ],
+    "ligand": [
+        {
+            "small_molecule": {    
+                "id": "D",
+                "smiles": "c12c(c(nc(n1)N)N)c(ccc2)Sc1ccccc1"
+                }
+        },
+        {
+            "rna": {    
+                "id": "G",
+                "sequence": "UU"
+                }
+        }
+    ],
+    "dialect": "SiteAF3"
+  }

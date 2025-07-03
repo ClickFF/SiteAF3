@@ -1,0 +1,28 @@
+{
+    "name": "SiteAF3_case",
+    "modelSeeds": [42],
+    "receptor": [
+        {
+            "rec_struct_path": "/work/hat170/aptamer/SiteAF3/test_input/7to1/7to1.pdb",
+            "fixed_chain_id": ["A"],
+            "hotspot_path": "/work/hat170/aptamer/SiteAF3/test_input/7to1/7to1_hotspot.pdb",
+            "pocket_path": "/work/hat170/aptamer/SiteAF3/test_input/7to1/7to1_pocket.pdb"
+        }
+    ],
+    "ligand": [
+        {
+            "rna": {    
+            "id": "B",
+            "sequence": "GGAUCGAUCGA",
+            "unpaired_msa": null
+                }
+        },
+        {
+            "rna": {    
+            "id": "C",
+            "sequence": "UCGAUCGAUCC"
+                }
+        }
+    ],
+    "dialect": "SiteAF3"
+  }

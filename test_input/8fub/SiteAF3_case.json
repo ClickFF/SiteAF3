@@ -1,0 +1,21 @@
+{
+    "name": "SiteAF3_case",
+    "modelSeeds": [42],
+    "receptor": [
+        {
+            "rec_struct_path": "/work/hat170/aptamer/SiteAF3/test_input/8fub/8fub.pdb",
+            "fixed_chain_id": ["A"],
+            "hotspot_path": "/work/hat170/aptamer/SiteAF3/test_input/8fub/8fub_hotspot.pdb",
+            "pocket_path": "/work/hat170/aptamer/SiteAF3/test_input/8fub/8fub_pocket.pdb"
+        }
+    ],
+    "ligand": [
+        {
+            "protein": {    
+            "id": "B",
+            "sequence": "SGKRKKIRTIAAYPLGVGKS"
+                }
+        }
+    ],
+    "dialect": "SiteAF3"
+  }

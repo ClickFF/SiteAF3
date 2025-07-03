@@ -1,0 +1,21 @@
+{
+    "name": "SiteAF3_case",
+    "modelSeeds": [42],
+    "receptor": [
+        {
+            "rec_struct_path": "/work/hat170/aptamer/SiteAF3/test_input/8t59/8t59.pdb",
+            "fixed_chain_id": ["A","B"],
+            "hotspot_path": "/work/hat170/aptamer/SiteAF3/test_input/8t59/8t59_hotspot.pdb",
+            "pocket_path": "/work/hat170/aptamer/SiteAF3/test_input/8t59/8t59_pocket.pdb"
+        }
+    ],
+    "ligand": [
+        {
+            "protein": {    
+            "id": "E",
+            "sequence": "ESFEDAHVEHSISRSLLEG"
+                }
+        }
+    ],
+    "dialect": "SiteAF3"
+  }
