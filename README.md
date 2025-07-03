@@ -101,12 +101,14 @@ See more JSON cases in `test_input` folder.
     "name": "my_complex",
     "receptor": [{
         "rec_struct_path": "input.pdb",
-        "fixed_chain_id": ["A", "B"]
+        "fixed_chain_id": ["A", "B"],
+        "hotspot_path": "/PATH/TO/input_hotspot.pdb",
+        "pocket_path": "/PATH/TO/input_pocket.pdb"
     }],
     "ligand": [{
         "type": "rna",
         "chain_id": "C",
-        "seq_path": "ligand.fasta"
+        "sequence": "..."
     }],
     "modelSeeds": [42, 123, 456]
 }
