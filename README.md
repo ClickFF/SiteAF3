@@ -53,6 +53,7 @@ conda env update --file environment.yml
 
 ### 1. Generate hotspot and pocket files
 
+You can use the scripts here, or you can use PyMOL to build your own files.  
 ```bash
 python generate_hotspot.py \
     --input_pdb /PATH/TO/pdb_file \
