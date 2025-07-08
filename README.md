@@ -191,7 +191,7 @@ If you use SiteAF3 in your research, please cite:
 @article{Abramson2024,
   author  = {Haocheng, Tang and Junmei, Wang},
   journal = {},
-  title   = {Accurate structure prediction of biomolecular interactions with AlphaFold 3},
+  title   = {Accurate Site-specific Folding via Conditional Diffusion Based on Alphafold3},
   year    = {2025},
   volume  = {},
   number  = {},
