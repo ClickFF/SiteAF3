@@ -180,7 +180,8 @@ class ModelRunner:
         self,
         features_batch: af3_features.BatchDict, 
         result: model.ModelResult,
-        target_name: str
+        target_name: str,
+        rng_seed: int = 1357066236 # Default to a fixed seed if not provided
     ) -> tuple[list[model.InferenceResult], dict[str, np.ndarray] | None]:
         """Extract inference results and embeddings from model output (if set)"""
         inference_results = list(
