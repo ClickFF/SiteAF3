@@ -199,6 +199,18 @@ If you use SiteAF3 in your research, please cite:
   doi     = {}
 }
 
+@misc{doi:10.1101/2025.07.06.663385,
+	doi = {10.1101/2025.07.06.663385},
+	publisher = {Cold Spring Harbor Laboratory},
+	title = {Accurate Site-specific Folding via Conditional Diffusion Based on Alphafold3},
+	author = {Tang, Haocheng and Wang, Junmei},
+	note = {[Online; accessed 2025-07-10]},
+	date = {2025-07-10},
+	year = {2025},
+	month = {7},
+	day = {10},
+}
+
 @software{siteaf3,
   title={SiteAF3: Universal Molecular Interaction Analysis Platform},
   author={Haocheng Tang},
