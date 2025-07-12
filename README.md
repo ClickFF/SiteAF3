@@ -188,7 +188,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 If you use SiteAF3 in your research, please cite:
 
 ```bibtex
-@article{Abramson2024,
+@article{,
   author  = {Haocheng, Tang and Junmei, Wang},
   journal = {},
   title   = {Accurate Site-specific Folding via Conditional Diffusion Based on Alphafold3},
@@ -199,7 +199,11 @@ If you use SiteAF3 in your research, please cite:
   doi     = {}
 }
 
-@misc{doi:10.1101/2025.07.06.663385,
+@misc{doi:10.1101/2025.07.06.663385
+        
+        
+        
+        ,
 	doi = {10.1101/2025.07.06.663385},
 	publisher = {Cold Spring Harbor Laboratory},
 	title = {Accurate Site-specific Folding via Conditional Diffusion Based on Alphafold3},
