@@ -9,6 +9,8 @@
 SiteAF3 is a universal molecular interaction analysis platform based on AlphaFold3, supporting structure prediction and analysis for various receptor-ligand type combinations.
 ![Figure 1](./figure/1.png)
 
+🚨 **v1.1.0 Update** Supporting `--use_pocket_masked_af3_msa_for_embedding`, enhancing binding pocket locating. 
+
 ## Core Features
 
 ### 🎯 Supported Molecule Types
@@ -175,6 +177,10 @@ Use the `--verbose` parameter to get detailed debugging information.
 - 🧬 Intelligent molecular recognition system
 - 📁 Flexible configuration system
 - 🛠️ Parallel processing support
+
+### Version 1.1.0 - Universal Molecule Type Support
+
+Supporting `--use_pocket_masked_af3_msa_for_embedding`, enhancing binding pocket locating. 
 
 ## Contributing
 
