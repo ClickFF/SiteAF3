@@ -181,6 +181,12 @@ def create_arg_parser():
         help="Enable hotspot-based MSA generation for protein chains during embedding. Can be combined with AF3 MSA. Default is False.",
     )
     parser.add_argument(
+        "--use_pocket_masked_af3_msa_for_embedding",
+        action="store_true",
+        default=False,
+        help="Enable pocket-masked AF3 MSA for receptor chains only during embedding. First runs AF3 MSA generation, then applies pocket mask to filter receptor sequences while keeping ligand protein MSA unchanged. Default is False.",
+    )
+    parser.add_argument(
         "--use_pocket_diffusion_for_prediction",
         action="store_true",
         default=True, # Defaulting to True for SiteAF3 typical use case
@@ -583,6 +589,7 @@ def main(args):
             print(f"  Use AF3 MSA for embedding: {args.use_af3_msa_for_embedding}")
             print(f"  Use Pocket MSA for embedding: {args.use_pocket_msa_for_embedding}")
             print(f"  Use Hotspot MSA for embedding: {args.use_hotspot_msa_for_embedding}")
+            print(f"  Use Pocket Masked AF3 MSA for embedding: {args.use_pocket_masked_af3_msa_for_embedding}")
 
         embedding_start_time = time.time()
         embedding_data = None # Ensure it's defined in this scope
@@ -616,11 +623,12 @@ def main(args):
                 # Use the generic struct_emb_af3 method
                 embedding_data = embedder.struct_emb_af3(
                     pdb_file=str(pdb_path),
-                    db_dir=args.db_dir if args.use_af3_msa_for_embedding else None,
+                    db_dir=args.db_dir if (args.use_af3_msa_for_embedding or args.use_pocket_masked_af3_msa_for_embedding) else None,
                     msa_dir=None, 
                     use_af3_msa=args.use_af3_msa_for_embedding,
                     use_pocket_msa=args.use_pocket_msa_for_embedding,
                     use_hotspot_msa=args.use_hotspot_msa_for_embedding,
+                    use_pocket_masked_af3_msa=args.use_pocket_masked_af3_msa_for_embedding,
                     hotspot_cutoff=args.hotspot_cutoff,
                     pocket_cutoff=args.pocket_cutoff,
                     ligand_sequences_override=None,
@@ -639,22 +647,23 @@ def main(args):
                     print(f"Using original embedding method (protein-nucleic complex)")
             embedding_data = embedder.struct_emb_af3(
                 pdb_file=str(pdb_path),
-                db_dir=args.db_dir if args.use_af3_msa_for_embedding else None,
+                db_dir=args.db_dir if (args.use_af3_msa_for_embedding or args.use_pocket_masked_af3_msa_for_embedding) else None,
                 msa_dir=None, 
                 use_af3_msa=args.use_af3_msa_for_embedding,
                 use_pocket_msa=args.use_pocket_msa_for_embedding,
                 use_hotspot_msa=args.use_hotspot_msa_for_embedding,
+                use_pocket_masked_af3_msa=args.use_pocket_masked_af3_msa_for_embedding,
                 hotspot_cutoff=args.hotspot_cutoff,
                 pocket_cutoff=args.pocket_cutoff,
-                    ligand_sequences_override=ligand_specs,
+                ligand_sequences_override=ligand_specs,
                 ligand_specs=ligand_specs,
-                    explicit_protein_chain_ids=receptor_chain_ids,
-                    explicit_ligand_chain_ids=ligand_chain_ids,
+                explicit_protein_chain_ids=receptor_chain_ids,
+                explicit_ligand_chain_ids=ligand_chain_ids,
                 rng_seed_override=seed_value,
                 predefined_hotspot_pdb=str(hotspot_pdb_path) if hotspot_pdb_path else None,
-                    predefined_pocket_pdb=str(pocket_pdb_path) if pocket_pdb_path else None,
-                    receptor_type=receptor_type_final,
-                    ligand_type=ligand_type_final
+                predefined_pocket_pdb=str(pocket_pdb_path) if pocket_pdb_path else None,
+                receptor_type=receptor_type_final,
+                ligand_type=ligand_type_final
             )
         except Exception as e:
             print(f"Error during embedding generation for seed {seed_value}: {e}")
