@@ -164,7 +164,7 @@ output_dir/
 ### Result summary
 
 Prediction accuracy across biomolecular complexes
-![Table 1](./figure/Table-1.png)
+![Table 1](./figure/Tabel-1.png)
 
 ## Troubleshooting
 
@@ -211,7 +211,9 @@ If you use SiteAF3 in your research, please cite:
   doi     = {}
 }
 
-@misc{doi:10.1101/2025.07.06.663385,
+@misc{doi:10.1101/2025.07.06.663385
+        
+        ,
 	doi = {10.1101/2025.07.06.663385},
 	publisher = {Cold Spring Harbor Laboratory},
 	title = {Accurate Site-specific Folding via Conditional Diffusion Based on Alphafold3},
