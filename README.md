@@ -8,7 +8,7 @@
 
 SiteAF3 is a universal molecular interaction analysis platform based on AlphaFold3, supporting structure prediction and analysis for various receptor-ligand type combinations.
 
-🚨 **v1.1.0 Update** Supporting `--use_pocket_masked_af3_msa_for_embedding`, enhancing binding pocket locating. 
+🚨 **v1.1.0 Update** Supporting `--use_pocket_masked_af3_msa_for_embedding`, enhancing binding pocket locating. See the performance in Table 1. 
 
 ![Figure 1](./figure/1.png)
 
