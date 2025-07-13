@@ -88,7 +88,8 @@ python run_SiteAF3.py \
     --output_dir /PATH/TO/output_dir \
     --use_pocket_msa_for_embedding (OPTIONAL) \
     --use_hotspot_msa_for_embedding (OPTIONAL) \
-    --use_af3_msa (OPTIONAL)\
+    --use_af3_msa_for_embedding (OPTIONAL) \
+    --use_pocket_masked_af3_msa_for_embedding  (v1.1.0 OPTIONAL) \
     --verbose
 ```
 
