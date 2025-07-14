@@ -164,7 +164,7 @@ output_dir/
 ### Result summary
 
 Prediction accuracy across biomolecular complexes
-![Table 1](./figure/Table-.png)
+![Table 1](./figure/Table-1.png)
 
 ## Troubleshooting
 
