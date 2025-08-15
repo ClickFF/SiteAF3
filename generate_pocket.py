@@ -303,10 +303,10 @@ def main():
     )
     
     if success:
-        print(f"口袋结构生成成功: {output_pdb}")
+        print(f"Pocket structure generated successfully: {output_pdb}")
         return 0
     else:
-        print("口袋结构生成失败")
+        print("Pocket structure generation failed")
         return 1
 
 
