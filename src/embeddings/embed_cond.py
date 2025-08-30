@@ -52,7 +52,7 @@ try:
     AF3_MSA_MASKING_AVAILABLE = True
 except ImportError:
     from embeddings.masking_af3_msa import apply_pocket_mask_to_msa
-    AF3_MSA_MASKING_AVAILAB
+    AF3_MSA_MASKING_AVAILABLE = False
     print("Warning: AF3 MSA masking not available, using simple method")
 
 MAX_ATOMS_PER_TOKEN = 24
