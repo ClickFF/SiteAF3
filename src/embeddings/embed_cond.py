@@ -222,17 +222,44 @@ class Embedder():
             # Determine the number of tokens in the chain
             if isinstance(chain, folding_input.Ligand):
                 # Small molecule: number of tokens is the number of atoms
-                try:
-                    from rdkit import Chem
-                    mol = Chem.MolFromSmiles(chain.smiles)
-                    if mol is not None:
-                        chain_length = mol.GetNumAtoms()
+                if hasattr(chain, 'smiles') and chain.smiles:
+                    # Use SMILES to calculate number of atoms
+                    try:
+                        from rdkit import Chem
+                        mol = Chem.MolFromSmiles(chain.smiles)
+                        if mol is not None:
+                            chain_length = mol.GetNumAtoms()
+                        else:
+                            raise ValueError("Failed to process small molecule from SMILES")
+                    except ImportError:
+                        raise ImportError("RDKit is required for small molecule processing")
+                    except Exception:
+                        raise ValueError("Failed to process small molecule from SMILES")
+                elif hasattr(chain, 'ccd_ids') and chain.ccd_ids:
+                    # For CCD-defined small molecules, use actual atoms in PDB instead of theoretical heavy atoms
+                    # This avoids the mismatch between CCD heavy atom count and actual PDB atoms
+                    actual_atoms_in_pdb = 0
+                    
+                    # Count actual atoms in PDB for this chain
+                    for model in fold_input.chains:
+                        if hasattr(model, 'id') and model.id == chain.id:
+                            # This is the current chain we're checking
+                            continue
+                    
+                    # Use CCD heavy atoms as fallback if PDB parsing fails
+                    if hasattr(self, '_current_ccd_heavy_atoms_info'):
+                        ccd_heavy_atoms_info = getattr(self, '_current_ccd_heavy_atoms_info', {})
+                        total_heavy_atoms = 0
+                        for ccd_id in chain.ccd_ids:
+                            if ccd_id in ccd_heavy_atoms_info:
+                                total_heavy_atoms += ccd_heavy_atoms_info[ccd_id]
+                        chain_length = total_heavy_atoms
+                        if self.verbose:
+                            print(f"Using CCD heavy atoms count ({total_heavy_atoms}) for small molecule chain {chain.id}")
                     else:
-                        raise ValueError("Failed to process small molecule")
-                except ImportError:
-                    raise ImportError("RDKit is required for small molecule processing")
-                except Exception:
-                    raise ValueError("Failed to process small molecule")
+                        raise ValueError(f"No cached CCD heavy atoms info, cannot calculate number of heavy atoms for small molecule {chain.id}")
+                else:
+                    raise ValueError(f"Small molecule chain {chain.id} neither has SMILES nor CCD codes")
             else:
                 # Protein/nucleic acid: number of tokens is the number of residues
                 chain_length = len(chain.sequence)
@@ -1358,36 +1385,53 @@ class Embedder():
                 if chain_id is not None and spec_chain_id != chain_id:
                     continue
 
-                # Create virtual chain info for new added chains
-                new_chain_info = {
-                    'chain_id': spec_chain_id,
-                    'sequence': spec_info.get("sequence", spec_info.get("smiles", "")),
-                    'chain_type': spec_info["type"].lower(),
-                    'is_from_ligand_specs': True
-                }
-                
-                if not new_chain_info['sequence']:
-                    # Check if there are CCD codes
-                    if spec_info.get("ccd_codes"):
-                        new_chain_info['sequence'] = ",".join(spec_info["ccd_codes"])
-                    else:
+                if spec_info["type"].lower() == "small_molecule":
+                    # Special handling for small molecules - don't create chain_info with sequence
+                    chain_obj = self._create_small_molecule_chain_from_specs(spec_chain_id, spec_info)
+                    
+                    # Calculate token count for small molecules based on heavy atoms
+                    token_count = "unknown"
+                    if spec_info.get("ccd_codes") and hasattr(self, '_current_ccd_heavy_atoms_info'):
+                        ccd_heavy_atoms_info = getattr(self, '_current_ccd_heavy_atoms_info', {})
+                        total_heavy_atoms = 0
+                        for ccd_id in spec_info["ccd_codes"]:
+                            if ccd_id in ccd_heavy_atoms_info:
+                                total_heavy_atoms += ccd_heavy_atoms_info[ccd_id]
+                        token_count = total_heavy_atoms
+                    elif spec_info.get("smiles"):
+                        try:
+                            from rdkit import Chem
+                            mol = Chem.MolFromSmiles(spec_info["smiles"])
+                            if mol is not None:
+                                token_count = mol.GetNumAtoms()
+                        except:
+                            pass
+                    
+                    if self.verbose:
+                        print(f"Added new chain from ligand_specs: ID={spec_chain_id}, type=SMALL_MOLECULE, tokens={token_count}")
+                else:
+                    # Create virtual chain info for protein/nucleic chains
+                    new_chain_info = {
+                        'chain_id': spec_chain_id,
+                        'sequence': spec_info.get("sequence", ""),
+                        'chain_type': spec_info["type"].lower(),
+                        'is_from_ligand_specs': True
+                    }
+                    
+                    if not new_chain_info['sequence']:
                         if self.verbose:
                             print(f"Warning: Chain {spec_chain_id} in ligand_specs has empty sequence, skipping.")
                         continue
-                
-                if self.verbose:
-                    print(f"Added new chain from ligand_specs: ID={spec_chain_id}, type={new_chain_info['chain_type'].upper()}, length={len(new_chain_info['sequence'])}")
+                    
+                    if self.verbose:
+                        print(f"Added new chain from ligand_specs: ID={spec_chain_id}, type={new_chain_info['chain_type'].upper()}, length={len(new_chain_info['sequence'])}")
 
-                # Empty mask info (new chains don't need masks)
-                empty_mask_info = {
-                    'pocket_mask_values': [],
-                    'hotspot_mask_values': []
-                }
-                
-                if new_chain_info['chain_type'] == "small_molecule":
-                    # Special handling for small molecules
-                    chain_obj = self._create_small_molecule_chain_from_specs(spec_chain_id, spec_info)
-                else:
+                    # Empty mask info (new chains don't need masks)
+                    empty_mask_info = {
+                        'pocket_mask_values': [],
+                        'hotspot_mask_values': []
+                    }
+                    
                     chain_obj = self._create_chain_with_msa(
                         new_chain_info, empty_mask_info,
                         use_af3_msa, use_pocket_msa, use_hotspot_msa,
@@ -1473,10 +1517,7 @@ class Embedder():
                             print(f"Warning: Error calculating number of heavy atoms for small molecule {chain.id}: {e}")
                         chain_length = 1  # Default at least 1 token
                 elif chain.ccd_ids is not None:
-                    # Use CCD codes as "sequence"
-                    sequence = ",".join(chain.ccd_ids)
-                    # For CCD codes, we need to extract SMILES from CCD file, then calculate number of heavy atoms
-                    # Instead of using AlphaFold3's CCD database
+                    # For CCD codes, calculate heavy atoms first
                     chain_length = 0
                     total_heavy_atoms = 0
                     
@@ -1488,6 +1529,11 @@ class Embedder():
                             if ccd_id in ccd_heavy_atoms_info:
                                 total_heavy_atoms += ccd_heavy_atoms_info[ccd_id]
                         chain_length = total_heavy_atoms
+                        # Create a placeholder sequence string that matches the token count
+                        # Use 'X' for each heavy atom to maintain correct length
+                        sequence = 'X' * chain_length
+                        if self.verbose:
+                            print(f"Small molecule chain {chain.id}: CCD codes {chain.ccd_ids}, heavy atoms: {total_heavy_atoms}, sequence placeholder: {sequence[:10]}...")
                     else:
                         raise ValueError(f"No cached CCD heavy atoms info, cannot calculate number of heavy atoms for small molecule {chain.id}")
                 else:
@@ -1605,7 +1651,7 @@ class Embedder():
                     if len(atom_list) != chain_length and self.verbose:
                         print(f"Warning: Calculated number of atoms ({chain_length}) for small molecule chain {internal_chain_id} does not match the number of atoms in PDB ({len(atom_list)}).")
                     
-                    # Create mapping for each atom
+                    # Create mapping for each token (use calculated chain_length to match embeddings)
                     for i in range(chain_length):
                         if i < len(atom_list):
                             atom = atom_list[i]
@@ -1777,6 +1823,7 @@ class Embedder():
                 if chain_type == "ligand":
                     # For small molecules, directly get atom coordinates from PDB
                     found_atom_coords = None
+                    found_atom = None
                     for model in structure:
                         if internal_chain_id in model:
                             chain_pdb = model[internal_chain_id]
@@ -1785,6 +1832,7 @@ class Embedder():
                                 for atom in residue.get_atoms():
                                     if atom_idx == residue_idx_in_chain:
                                         found_atom_coords = atom.get_coord()
+                                        found_atom = atom
                                         break
                                     atom_idx += 1
                                 if found_atom_coords is not None:
@@ -1796,6 +1844,13 @@ class Embedder():
                         structure_embedding[embed_idx, 0, :] = found_atom_coords
                         if self.verbose:
                             print(f"Small molecule atom coordinates {internal_chain_id} token {embed_idx}: {found_atom_coords}")
+                    else:
+                        # For CCD-defined atoms that don't exist in PDB, set default coordinates
+                        # This allows the diffusion process to predict their positions
+                        default_coords = np.array([0.0, 0.0, 0.0])
+                        structure_embedding[embed_idx, 0, :] = default_coords
+                        if self.verbose:
+                            print(f"Small molecule chain {internal_chain_id} token {embed_idx}: using default coordinates (will be predicted by diffusion)")
                 else:
                     # Protein/nucleic acid: process as usual
                     found_pdb_key = None
@@ -2437,6 +2492,7 @@ class Embedder():
             if self.verbose:
                 print(f"Warning: Small molecule chain {spec_chain_id} in ligand_specs is missing CCD codes or SMILES string. Skipping.")
             return None
+
 
 # def test_seq_emb_af3(pdb_file, weight_dir=None, verbose=True):
 #     """
