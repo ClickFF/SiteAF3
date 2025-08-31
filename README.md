@@ -170,6 +170,19 @@ Prediction accuracy across biomolecular complexes
 
 Use the `--verbose` parameter to get detailed debugging information.
 
+### Version 1.1.1 - Bug Fix and Broader CCD Support
+
+8/31/2025
+
+- Fix the bug of baseline model in V1.1.0
+- Support CCD when using multiple ligands as input
+
+### Version 1.1.0 - Universal Molecule Type Support
+
+7/12/2025
+
+Supporting `--use_pocket_masked_af3_msa_for_embedding`, enhancing binding pocket locating. 
+
 ### Version 1.0.0 - Universal Molecule Type Support
 
 7/6/2025
@@ -180,12 +193,6 @@ Use the `--verbose` parameter to get detailed debugging information.
 - 🧬 Intelligent molecular recognition system
 - 📁 Flexible configuration system
 - 🛠️ Parallel processing support
-
-### Version 1.1.0 - Universal Molecule Type Support
-
-7/12/2025
-
-Supporting `--use_pocket_masked_af3_msa_for_embedding`, enhancing binding pocket locating. 
 
 ## Contributing
 
