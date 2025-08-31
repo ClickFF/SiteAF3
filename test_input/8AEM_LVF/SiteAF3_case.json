@@ -1,0 +1,41 @@
+{
+    "name": "SiteAF3_8AEM_LVF_CCD",
+    "modelSeeds": [
+        930779500,
+        621555894,
+        349864099,
+        1535112279,
+        1995118603
+    ],
+    "receptor": [
+        {
+            "rec_struct_path": "/work/hat170/aptamer/SiteAF3/FoldBench/Ligand/SiteAF3/input_CCD/8AEM_LVF/8AEM_LVF.pdb",
+            "fixed_chain_id": [
+                "A"
+            ],
+            "hotspot_path": "/work/hat170/aptamer/SiteAF3/FoldBench/Ligand/SiteAF3/input_CCD/8AEM_LVF/8AEM_LVF_hotspot.pdb",
+            "pocket_path": "/work/hat170/aptamer/SiteAF3/FoldBench/Ligand/SiteAF3/input_CCD/8AEM_LVF/8AEM_LVF_pocket.pdb"
+        }
+    ],
+    "ligand": [
+        {
+            "small_molecule": {
+                "id": "L",
+                "ccdCodes": [
+                    "LVF"
+                ]
+            }
+        },
+        {
+            "small_molecule": {
+                "id": "J",
+                "ccdCodes": [
+                    "ATP"
+                ]
+            }
+        }
+    ],
+    "userCCDPath": "/work/hat170/aptamer/SiteAF3/Co-factor/SiteAF3/input/8AEM_LVF/ccd.cif",
+    "dialect": "SiteAF3",
+    "version": 3
+}
