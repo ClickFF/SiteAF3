@@ -8,6 +8,8 @@
 
 SiteAF3 is a universal molecular interaction analysis platform based on AlphaFold3, supporting structure prediction and analysis for various receptor-ligand type combinations.
 
+SiteAF3 is published on PNAS!
+
 🚨 **v1.1.0 Update** Supporting `--use_pocket_masked_af3_msa_for_embedding`, enhancing binding pocket locating. See the performance in Table 1. 
 
 ![Figure 1](./figure/1.png)
@@ -206,27 +208,20 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 If you use SiteAF3 in your research, please cite:
 
 ```bibtex
-@article{,
-  author  = {Haocheng, Tang and Junmei, Wang},
-  journal = {},
-  title   = {Accurate Site-specific Folding via Conditional Diffusion Based on Alphafold3},
-  year    = {2025},
-  volume  = {},
-  number  = {},
-  pages   = {},
-  doi     = {}
-}
-
-@misc{doi:10.1101/2025.07.06.663385,
-	doi = {10.1101/2025.07.06.663385},
-	publisher = {Cold Spring Harbor Laboratory},
-	title = {Accurate Site-specific Folding via Conditional Diffusion Based on Alphafold3},
-	author = {Tang, Haocheng and Wang, Junmei},
-	note = {[Online; accessed 2025-07-10]},
-	date = {2025-07-10},
-	year = {2025},
-	month = {7},
-	day = {10},
+@article{doi:10.1073/pnas.2521048122,
+journal = {Proceedings of the National Academy of Sciences},
+doi = {10.1073/pnas.2521048122},
+issn = {0027-8424},
+number = {44},
+publisher = {Proceedings of the National Academy of Sciences},
+title = {Accurate site-specific folding via conditional diffusion based on AlphaFold3},
+volume = {122},
+author = {Tang, Haocheng and Wang, Junmei},
+note = {[Online; accessed 2025-11-06]},
+date = {2025-10-30},
+year = {2025},
+month = {10},
+day = {30},
 }
 
 @software{siteaf3,
