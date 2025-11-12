@@ -10,6 +10,16 @@ SiteAF3 is a universal molecular interaction analysis platform based on AlphaFol
 
 SiteAF3 is published on PNAS!
 
+We notice that AlphaFold3 has some updates, which may affect the use of SiteAF3. 
+If you want to use latest version of AlphaFold3, known issues include:
+1. Change all the ".cached_ccd()" in `./src/embeddings/embed_cond.py` and `aptamer/SiteAF3/src/diffusion/run_cond_Diff.py` into ".Ccd()"
+Or you can use the corresponding AlphaFold3 version:
+```bash
+git clone https://github.com/google-deepmind/alphafold3.git
+cd alphafold3
+git checkout 7a4a2f7
+```
+
 🚨 **v1.1.0 Update** Supporting `--use_pocket_masked_af3_msa_for_embedding`, enhancing binding pocket locating. See the performance in Table 1. 
 
 ![Figure 1](./figure/1.png)
